@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Escáner de Acceso</title>
+  <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #0b0f17;
+      color: #fff;
+    }
+    .wrap {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 24px 16px 40px;
+    }
+    .card {
+      background: #141a26;
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 18px;
+      padding: 20px;
+      margin-bottom: 16px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+    }
+    h1 { font-size: 26px; margin: 0 0 14px; }
+    h2 { font-size: 18px; margin: 0 0 14px; }
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 14px;
+      color: #c7d2e0;
+    }
+    input, select, button {
+      width: 100%;
+      border-radius: 12px;
+      font-size: 16px;
+    }
+    input, select {
+      padding: 12px 14px;
+      border: 1px solid #2f3b52;
+      background: #0d1320;
+      color: #fff;
+      outline: none;
+    }
+    button {
+      padding: 13px 14px;
+      border: none;
+      cursor: pointer;
+      font-weight: 700;
+    }
+    .btn-primary { background: #5b8cff; color: white; }
+    .btn-secondary { background: #283246; color: white; }
+    .btn-success { background: #1f8f5f; color: white; }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+    #reader {
+      width: 100%;
+      overflow: hidden;
+      border-radius: 14px;
+      min-height: 250px;
+    }
+    .status {
+      margin-top: 14px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      font-size: 15px;
+      line-height: 1.4;
+    }
+    .ok { background: rgba(34, 197, 94, 0.16); color: #b9f8c7; }
+    .error { background: rgba(239, 68, 68, 0.16); color: #ffc8c8; }
+    .pill {
+      display: inline-block;
+      margin-top: 10px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      background: #1d2740;
+      color: #d4dcf0;
+      font-size: 13px;
+    }
+    .debug {
+      margin-top: 14px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: rgba(255,255,255,0.04);
+      color: #b9c5d6;
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 320px;
+      overflow: auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card" id="loginCard">
+      <h1>Escáner de acceso</h1>
+      <div class="row">
+        <div>
+          <label>Contraseña staff</label>
+          <input type="password" id="staffPassword" placeholder="Ingresa la contraseña">
+        </div>
+        <div>
+          <label>Nombre o correo del staff</label>
+          <input type="text" id="staffEmail" placeholder="Ej. staff@evento.com">
+        </div>
+        <div>
+          <button class="btn-primary" onclick="login()">Entrar</button>
+        </div>
+      </div>
+      <div id="loginStatus" class="status" style="display:none;"></div>
+    </div>
+
+    <div class="card" id="scannerCard" style="display:none;">
+      <h2>Selecciona taller</h2>
+      <div class="row">
+        <div>
+          <select id="workshopSelect">
+            <option value="">Cargando talleres...</option>
+          </select>
+        </div>
+        <div>
+          <button class="btn-secondary" onclick="startScanner()">Iniciar cámara</button>
+        </div>
+        <div>
+          <button class="btn-secondary" onclick="stopScanner()">Detener cámara</button>
+        </div>
+      </div>
+
+      <div class="pill" id="staffInfo"></div>
+      <div id="scanStatus" class="status" style="display:none;"></div>
+
+      <h2 style="margin-top:18px;">Respaldo manual</h2>
+      <div class="row">
+        <div>
+          <label>Captura manual de QR / ID</label>
+          <input type="text" id="manualQrInput" placeholder="Ej. EVT-2026-123456">
+        </div>
+        <div>
+          <button class="btn-success" onclick="submitManualQr()">Registrar manualmente</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" id="readerCard" style="display:none;">
+      <h2>Escanear QR</h2>
+      <div id="reader"></div>
+    </div>
+
+    <div class="card">
+      <h2>Debug</h2>
+      <div id="debugBox" class="debug">Esperando acciones...</div>
+    </div>
+  </div>
+
+  <script>
+    const API_URL = 'TU_URL_DE_APPS_SCRIPT_EXEC';
+
+    let html5QrCode = null;
+    let currentStaffEmail = '';
+    let canScan = true;
+    let scannerStarted = false;
+
+    function debug(message, data = null) {
+      const box = document.getElementById('debugBox');
+      let text = `[${new Date().toLocaleTimeString()}] ${message}`;
+      if (data !== null) {
+        try { text += '\n' + JSON.stringify(data, null, 2); }
+        catch (e) { text += '\n' + String(data); }
+      }
+      box.textContent = text + '\n\n' + box.textContent;
+    }
+
+    function showStatus(id, message, ok) {
+      const el = document.getElementById(id);
+      el.style.display = 'block';
+      el.className = 'status ' + (ok ? 'ok' : 'error');
+      el.textContent = message;
+    }
+
+    async function apiPost(payload) {
+      const res = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload)
+      });
+      return await res.json();
+    }
+
+    async function apiGetWorkshops() {
+      const res = await fetch(API_URL + '?action=workshops', { method: 'GET' });
+      return await res.json();
+    }
+
+    async function login() {
+      const password = document.getElementById('staffPassword').value.trim();
+      const staffEmail = document.getElementById('staffEmail').value.trim() || 'staff-demo';
+
+      debug('Intentando login...', { staffEmail });
+
+      try {
+        const result = await apiPost({
+          action: 'login',
+          password
+        });
+
+        debug('Respuesta login', result);
+
+        if (!result.ok) {
+          showStatus('loginStatus', 'Contraseña incorrecta.', false);
+          return;
+        }
+
+        currentStaffEmail = staffEmail;
+        document.getElementById('loginCard').style.display = 'none';
+        document.getElementById('scannerCard').style.display = 'block';
+        document.getElementById('readerCard').style.display = 'block';
+        document.getElementById('staffInfo').textContent = `Staff: ${currentStaffEmail}`;
+
+        loadWorkshops();
+      } catch (err) {
+        debug('Error login', err);
+        showStatus('loginStatus', 'Error al validar acceso.', false);
+      }
+    }
+
+    async function loadWorkshops() {
+      debug('Solicitando talleres...');
+      try {
+        const result = await apiGetWorkshops();
+        debug('Talleres recibidos', result);
+
+        const select = document.getElementById('workshopSelect');
+        select.innerHTML = '';
+
+        const defaultOption = document.createElement('option');
+        defaultOption.value = '';
+        defaultOption.textContent = 'Selecciona un taller';
+        select.appendChild(defaultOption);
+
+        const workshops = result.workshops || [];
+        workshops.forEach((w) => {
+          const option = document.createElement('option');
+          option.value = w.workshopId;
+          option.textContent = `${w.nombreTaller} · ${w.horario} · ${w.ubicacion}`;
+          select.appendChild(option);
+        });
+
+        showStatus('scanStatus', `Se cargaron ${workshops.length} taller(es).`, true);
+      } catch (err) {
+        debug('Error talleres', err);
+        showStatus('scanStatus', 'Error cargando talleres.', false);
+      }
+    }
+
+    async function startScanner() {
+      const workshopId = document.getElementById('workshopSelect').value;
+      if (!workshopId) {
+        showStatus('scanStatus', 'Primero selecciona un taller.', false);
+        return;
+      }
+
+      await stopScannerSilently();
+      html5QrCode = new Html5Qrcode("reader");
+      scannerStarted = false;
+
+      const configs = [
+        { facingMode: { exact: "environment" } },
+        { facingMode: "environment" },
+        { facingMode: "user" }
+      ];
+
+      for (const cameraConfig of configs) {
+        try {
+          await html5QrCode.start(
+            cameraConfig,
+            { fps: 10, qrbox: { width: 250, height: 250 } },
+            onScanSuccess,
+            () => {}
+          );
+          scannerStarted = true;
+          debug('Cámara iniciada', cameraConfig);
+          showStatus('scanStatus', 'Cámara iniciada. Lista para escanear.', true);
+          return;
+        } catch (err) {
+          debug('Intento fallido de cámara', { cameraConfig, err: String(err) });
+        }
+      }
+
+      showStatus('scanStatus', 'No se pudo abrir la cámara. Usa el respaldo manual.', false);
+    }
+
+    async function stopScanner() {
+      await stopScannerSilently();
+      showStatus('scanStatus', 'Cámara detenida.', true);
+    }
+
+    async function stopScannerSilently() {
+      if (html5QrCode) {
+        try {
+          if (scannerStarted) await html5QrCode.stop();
+        } catch (e) {}
+        try {
+          await html5QrCode.clear();
+        } catch (e) {}
+        html5QrCode = null;
+        scannerStarted = false;
+      }
+    }
+
+    async function onScanSuccess(decodedText) {
+      if (!canScan) return;
+      canScan = false;
+
+      const payload = {
+        action: 'registerScan',
+        qrValue: decodedText,
+        workshopId: document.getElementById('workshopSelect').value,
+        staffEmail: currentStaffEmail
+      };
+
+      debug('QR escaneado', payload);
+
+      try {
+        const result = await apiPost(payload);
+        debug('Respuesta escaneo', result);
+        showStatus('scanStatus', result.message, !!result.ok);
+        document.getElementById('manualQrInput').value = decodedText;
+      } catch (err) {
+        debug('Error escaneo', err);
+        showStatus('scanStatus', 'Error registrando escaneo.', false);
+      }
+
+      setTimeout(() => { canScan = true; }, 1500);
+    }
+
+    async function submitManualQr() {
+      const qrValue = document.getElementById('manualQrInput').value.trim();
+      const workshopId = document.getElementById('workshopSelect').value;
+
+      if (!workshopId) {
+        showStatus('scanStatus', 'Primero selecciona un taller.', false);
+        return;
+      }
+
+      if (!qrValue) {
+        showStatus('scanStatus', 'Ingresa un QR o ID válido.', false);
+        return;
+      }
+
+      const payload = {
+        action: 'registerScan',
+        qrValue,
+        workshopId,
+        staffEmail: currentStaffEmail
+      };
+
+      debug('Registro manual', payload);
+
+      try {
+        const result = await apiPost(payload);
+        debug('Respuesta manual', result);
+        showStatus('scanStatus', result.message, !!result.ok);
+      } catch (err) {
+        debug('Error manual', err);
+        showStatus('scanStatus', 'Error registrando QR manual.', false);
+      }
+    }
+  </script>
+</body>
+</html>
